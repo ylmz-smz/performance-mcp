@@ -4,8 +4,6 @@ import { z } from 'zod';
 import { createSSEServer } from './sseTransport.js';
 import { analyzePerformance, getSession, getSessionScreenshot } from '../analyzer/performanceAnalyzer.js';
 import { prewarmBrowser } from '../utils/browser.js';
-// 确保MCP SDK版本兼容性
-const MCP_PROTOCOL_VERSION = '1.0';
 // 默认配置
 const DEFAULT_CONFIG = {
     name: 'performance-analyzer',
@@ -30,7 +28,6 @@ export async function createPerformanceServer(config = {}, transportMode = 'stdi
     const server = new McpServer({
         name: mergedConfig.name,
         version: mergedConfig.version,
-        protocolVersion: MCP_PROTOCOL_VERSION,
     });
     // 预热浏览器实例
     if (mergedConfig.prewarmBrowser) {

@@ -6,9 +6,6 @@ import { createSSEServer } from './sseTransport.js';
 import { analyzePerformance, getSession, getSessionScreenshot } from '../analyzer/performanceAnalyzer.js';
 import { prewarmBrowser } from '../utils/browser.js';
 
-// 确保MCP SDK版本兼容性
-const MCP_PROTOCOL_VERSION = '1.0';
-
 // 性能分析MCP服务器配置
 interface PerformanceMcpServerConfig {
   name: string;
@@ -51,7 +48,6 @@ export async function createPerformanceServer(
   const server = new McpServer({
     name: mergedConfig.name,
     version: mergedConfig.version,
-    protocolVersion: MCP_PROTOCOL_VERSION,
   });
   
   // 预热浏览器实例
