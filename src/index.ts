@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { createPerformanceServer, TransportMode } from './server/server.js';
 
 // 解析命令行参数
