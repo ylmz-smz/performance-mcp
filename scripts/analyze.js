@@ -2,7 +2,7 @@
 
 /**
  * 性能分析MCP服务 CLI 演示工具
- * 用法: node scripts/demo.js [url]
+ * 用法: node scripts/analyze.js [url]
  * 如果不提供URL，脚本会启动服务并等待用户输入
  */
 
@@ -60,57 +60,66 @@ async function main() {
   });
   
   // 捕获输出进行处理
-  let responseBuffer = '';
-  let collectingResponse = false;
   let sessionId = null;
-  let awaitingUrlInput = !url; // 如果没有提供URL，则等待用户输入
+
+  // 发送 MCP initialize 握手请求
+  const initRequest = {
+    jsonrpc: "2.0",
+    id: "init",
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "demo-client", version: "1.0.0" }
+    }
+  };
+  mcpProcess.stdin.write(JSON.stringify(initRequest) + '\n');
+
+  /**
+   * 发送分析请求（可接收 URL 或从命令行读取）
+   */
+  function sendAnalyzeRequest(targetUrl) {
+    console.log(`🔍 开始分析URL: ${targetUrl}`);
+    const request = {
+      jsonrpc: "2.0",
+      id: "1",
+      method: "tools/call",
+      params: {
+        name: "analyze-performance",
+        arguments: { url: targetUrl, saveScreenshot: true }
+      }
+    };
+    mcpProcess.stdin.write(JSON.stringify(request) + '\n');
+  }
   
   rl.on('line', async (line) => {
     try {
       const data = JSON.parse(line);
-      
-      // 处理MCP消息
-      if (data.type === 'ready') {
+
+      // 处理 initialize 响应，完成握手后发送 initialized 通知并开始分析
+      if (data.id === "init" && data.result) {
         console.log('✅ 性能分析服务已就绪');
-        
-        if (awaitingUrlInput) {
-          // 如果没有提供URL，提示用户输入
+        // 发送 initialized 通知
+        const initializedNotification = {
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+          params: {}
+        };
+        mcpProcess.stdin.write(JSON.stringify(initializedNotification) + '\n');
+
+        if (url) {
+          sendAnalyzeRequest(url);
+        } else {
           const userRl = createUserInterface();
           userRl.question('请输入要分析的URL: ', (inputUrl) => {
-            console.log(`🔍 开始分析URL: ${inputUrl}`);
             userRl.close();
-            
-            // 发送分析请求（改为JSON-RPC 2.0格式）
-            const request = {
-              jsonrpc: "2.0",
-              id: "1",
-              method: "tools/call",
-              params: {
-                name: "analyze-performance",
-                arguments: { url: inputUrl, saveScreenshot: true }
-              }
-            };
-            
-            mcpProcess.stdin.write(JSON.stringify(request) + '\n');
+            sendAnalyzeRequest(inputUrl);
           });
-        } else {
-          // 如果提供了URL，直接分析
-          console.log(`🔍 开始分析URL: ${url}`);
-          
-          // 发送分析请求（改为JSON-RPC 2.0格式）
-          const request = {
-            jsonrpc: "2.0",
-            id: "1",
-            method: "tools/call",
-            params: {
-              name: "analyze-performance",
-              arguments: { url, saveScreenshot: true }
-            }
-          };
-          
-          mcpProcess.stdin.write(JSON.stringify(request) + '\n');
         }
-      } else if ((data.jsonrpc === "2.0" && data.id === "1" && data.result) || 
+        return;
+      }
+
+      if ((data.jsonrpc === "2.0" && data.id === "1" && data.result) || 
                 (data.type === 'response' && data.id === '1')) {
         // 适配两种可能的响应格式
         const content = data.result ? data.result.content : data.content;
@@ -125,30 +134,6 @@ async function main() {
         
         // 获取响应文本
         const responseText = content && content[0] ? content[0].text : "";
-        
-        // 检查是否是等待URL输入的提示
-        if (responseText.includes('请提供要分析的网页URL')) {
-          console.log('等待URL输入...');
-          const userRl = createUserInterface();
-          userRl.question('请输入要分析的URL: ', (inputUrl) => {
-            console.log(`🔍 开始分析URL: ${inputUrl}`);
-            userRl.close();
-            
-            // 发送分析请求（改为JSON-RPC 2.0格式）
-            const request = {
-              jsonrpc: "2.0",
-              id: "1",
-              method: "tools/call",
-              params: {
-                name: "analyze-performance",
-                arguments: { url: inputUrl, saveScreenshot: true }
-              }
-            };
-            
-            mcpProcess.stdin.write(JSON.stringify(request) + '\n');
-          });
-          return;
-        }
         
         console.log('✅ 分析完成!');
         

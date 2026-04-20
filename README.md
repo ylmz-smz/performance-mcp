@@ -58,8 +58,8 @@ node build/index.js --transport=sse --port=3002
 #### 方式一：直接提供URL（传统方式）
 
 ```bash
-# 使用demo.js演示工具分析指定URL
-node scripts/demo.js https://example.com
+# 使用 analyze.js CLI 分析指定URL
+node scripts/analyze.js https://example.com
 ```
 
 #### 方式二：先启动服务，后输入URL（交互式）
@@ -118,10 +118,10 @@ npm run dev:sse
 
 ```bash
 # 分析指定URL
-node scripts/demo.js https://example.com
+node scripts/analyze.js https://example.com
 
 # 交互式输入URL
-node scripts/demo.js
+node scripts/analyze.js
 ```
 
 ### SSE模式客户端

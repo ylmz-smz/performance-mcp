@@ -474,9 +474,9 @@ async function collectWebVitals(page) {
                 totalBlockingTime: 0
             };
             // @ts-ignore - 全局web-vitals变量由上面注入的脚本提供
-            const { onLCP, onFID, onCLS, onTBT } = window.webVitals;
+            const { onLCP, onFID, onFCP, onCLS, onINP } = window.webVitals;
             let metricsCollected = 0;
-            const totalMetrics = 4;
+            const totalMetrics = 3; // LCP + CLS + TBT(longtask)
             function checkComplete() {
                 metricsCollected++;
                 if (metricsCollected >= totalMetrics) {
@@ -487,18 +487,46 @@ async function collectWebVitals(page) {
                 metrics.largestContentfulPaint = value;
                 checkComplete();
             });
-            onFID(({ value }) => {
-                metrics.firstInputDelay = value;
-                checkComplete();
-            });
+            // onFID 在 web-vitals v3 中已废弃，优先使用 onINP；两者都尝试
+            try {
+                if (typeof onINP === 'function') {
+                    onINP(({ value }) => {
+                        metrics.firstInputDelay = value;
+                    });
+                }
+                else if (typeof onFID === 'function') {
+                    onFID(({ value }) => {
+                        metrics.firstInputDelay = value;
+                    });
+                }
+            }
+            catch (_) { /* 忽略不支持的指标 */ }
             onCLS(({ value }) => {
                 metrics.cumulativeLayoutShift = value;
                 checkComplete();
             });
-            onTBT(({ value }) => {
-                metrics.totalBlockingTime = value;
+            // TBT 通过 PerformanceObserver longtask 计算（非 web-vitals 提供）
+            try {
+                let tbt = 0;
+                const observer = new PerformanceObserver((list) => {
+                    for (const entry of list.getEntries()) {
+                        const blockingTime = entry.duration - 50;
+                        if (blockingTime > 0)
+                            tbt += blockingTime;
+                    }
+                });
+                observer.observe({ type: 'longtask', buffered: true });
+                // 等待足够时间后取 TBT 快照
+                setTimeout(() => {
+                    observer.disconnect();
+                    metrics.totalBlockingTime = Math.round(tbt);
+                    checkComplete();
+                }, 3000);
+            }
+            catch (_) {
+                // 浏览器不支持 longtask，直接完成
                 checkComplete();
-            });
+            }
             // 30秒后无论如何都返回结果
             setTimeout(() => {
                 resolve(metrics);
