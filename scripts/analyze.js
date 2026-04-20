@@ -8,8 +8,17 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import readline from 'readline';
+
+// Windows 下切换控制台为 UTF-8，避免中文/emoji 乱码
+if (process.platform === 'win32') {
+  try {
+    execSync('chcp 65001', { stdio: 'ignore' });
+  } catch (_) {
+    // 忽略切换失败，继续运行
+  }
+}
 
 // 获取当前脚本的目录
 const __filename = fileURLToPath(import.meta.url);
@@ -50,7 +59,12 @@ async function main() {
   const mcpProcess = spawn('node', [join(BUILD_DIR, 'index.js')], {
     stdio: ['pipe', 'pipe', 'inherit'],
     cwd: ROOT_DIR,
+    env: { ...process.env, LANG: 'en_US.UTF-8' },
   });
+
+  // 强制以 UTF-8 读取子进程 stdout，避免 Windows 默认 GBK 编码导致 JSON 解析失败
+  mcpProcess.stdout.setEncoding('utf8');
+  mcpProcess.stdin.setDefaultEncoding('utf8');
   
   // 创建读写接口
   const rl = readline.createInterface({

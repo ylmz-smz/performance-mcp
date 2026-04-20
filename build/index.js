@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 import { createPerformanceServer } from './server/server.js';
+// Windows 下强制 UTF-8 编码，避免中文乱码导致 JSON-RPC 协议解析失败
+if (process.platform === 'win32') {
+    // 设置 stdin/stdout 为 UTF-8（仅对可读流有效，但有助于内部编码一致性）
+    if (process.stdout.isTTY) {
+        process.stdout.write('\u001b%G'); // 发送 VT100 UTF-8 模式切换序列
+    }
+    // 强制 Node.js 内部以 UTF-8 处理 Buffer → string 转换
+    process.env.LANG = 'en_US.UTF-8';
+}
 // 解析命令行参数
 function parseArgs() {
     const args = process.argv.slice(2);
