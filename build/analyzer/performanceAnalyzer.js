@@ -1,9 +1,9 @@
 import { nanoid } from 'nanoid';
-import { launchBrowser, visitPage, collectPerformanceMetrics, saveScreenshot, getScreenshotData } from '../utils/browser.js';
+import { launchBrowser, visitPage, visitPageWithWarmCache, collectPerformanceMetrics, saveScreenshot, getScreenshotData } from '../utils/browser.js';
 // 会话存储
 const sessions = new Map();
 // 分析URL的性能
-export async function analyzePerformance(url, saveScreenshotOption = true, timeout = 30000) {
+export async function analyzePerformance(url, saveScreenshotOption = true, timeout = 30000, warmCache = false) {
     // 生成会话ID
     const sessionId = nanoid();
     const timestamp = new Date().toISOString();
@@ -12,13 +12,13 @@ export async function analyzePerformance(url, saveScreenshotOption = true, timeo
     try {
         // 启动浏览器
         browser = await launchBrowser();
-        // 访问页面
-        const pageResult = await visitPage(browser, url, timeout);
-        if (!('page' in pageResult)) {
-            page = pageResult;
+        // 访问页面（warmCache 模式先预热缓存再测量）
+        if (warmCache) {
+            page = await visitPageWithWarmCache(browser, url, timeout);
         }
         else {
-            page = pageResult.page;
+            const pageResult = await visitPage(browser, url, timeout);
+            page = !('page' in pageResult) ? pageResult : pageResult.page;
         }
         // 收集性能指标
         const metrics = await collectPerformanceMetrics(page);

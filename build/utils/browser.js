@@ -259,6 +259,56 @@ export async function visitPage(browserOrUrl, urlOrTimeout, timeoutArg) {
     }
 }
 /**
+ * 预热缓存后访问页面：先冷访问一次预热 HTTP 缓存，再访问一次用于指标采集
+ * 模拟真实用户回访时的缓存命中场景
+ */
+export async function visitPageWithWarmCache(browser, url, timeout) {
+    const actualTimeout = Math.min(timeout || config.performance.defaultTimeout, config.performance.maxTimeout);
+    if (!isUrlAllowed(url)) {
+        throw new McpError(ErrorCode.URLBlocked, '此URL不允许访问', { url });
+    }
+    // 创建共享 BrowserContext，同一 Context 内的多个页面共享 HTTP 缓存
+    const context = await browser.newContext({
+        viewport: config.performance.defaultViewport,
+        bypassCSP: true,
+    });
+    try {
+        // 第一次访问：预热缓存（忽略超时错误，缓存可能已部分建立）
+        const warmPage = await context.newPage();
+        try {
+            await warmPage.goto(url, { waitUntil: 'networkidle', timeout: actualTimeout });
+        }
+        catch (_) {
+            // 预热阶段超时不中断流程
+        }
+        finally {
+            await warmPage.close();
+        }
+        // 第二次访问：使用缓存进行正式测量
+        const page = await context.newPage();
+        try {
+            await page.goto(url, { waitUntil: 'networkidle', timeout: actualTimeout });
+        }
+        catch (error) {
+            await page.close();
+            if (error.name === 'TimeoutError') {
+                throw new McpError(ErrorCode.TimeoutError, `页面加载超时(${actualTimeout}ms)`, { url, timeout: actualTimeout });
+            }
+            throw new McpError(ErrorCode.NetworkError, '页面访问失败', { url, originalError: error.message });
+        }
+        // 页面关闭时自动释放 Context
+        page.on('close', () => { context.close().catch(() => { }); });
+        return page;
+    }
+    catch (error) {
+        await context.close().catch(() => { });
+        if (!(error instanceof McpError)) {
+            throw new McpError(ErrorCode.BrowserError, '浏览器操作出错', { url, originalError: error.message });
+        }
+        throw error;
+    }
+}
+/**
  * 收集页面性能指标
  */
 export async function collectPerformanceMetrics(page) {

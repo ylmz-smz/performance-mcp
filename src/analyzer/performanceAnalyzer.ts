@@ -11,6 +11,7 @@ import {
 import {
   launchBrowser,
   visitPage,
+  visitPageWithWarmCache,
   collectPerformanceMetrics,
   saveScreenshot,
   getScreenshotData
@@ -23,7 +24,8 @@ const sessions: Map<string, AnalysisSession> = new Map();
 export async function analyzePerformance(
   url: string,
   saveScreenshotOption: boolean = true,
-  timeout: number = 30000
+  timeout: number = 30000,
+  warmCache: boolean = false
 ): Promise<PerformanceAnalysisResult> {
   // 生成会话ID
   const sessionId = nanoid();
@@ -36,12 +38,12 @@ export async function analyzePerformance(
     // 启动浏览器
     browser = await launchBrowser();
     
-    // 访问页面
-    const pageResult = await visitPage(browser, url, timeout);
-    if (!('page' in pageResult)) {
-      page = pageResult;
+    // 访问页面（warmCache 模式先预热缓存再测量）
+    if (warmCache) {
+      page = await visitPageWithWarmCache(browser, url, timeout);
     } else {
-      page = pageResult.page;
+      const pageResult = await visitPage(browser, url, timeout);
+      page = !('page' in pageResult) ? pageResult : pageResult.page;
     }
     
     // 收集性能指标

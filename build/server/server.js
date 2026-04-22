@@ -72,7 +72,8 @@ export async function createPerformanceServer(config = {}, transportMode = 'stdi
         url: z.string().url().optional().describe('要分析的网页URL'),
         saveScreenshot: z.boolean().optional().default(true).describe('是否保存页面截图'),
         timeout: z.number().optional().default(30000).describe('页面加载超时时间(毫秒)'),
-    }, async ({ url, saveScreenshot, timeout }) => {
+        warmCache: z.boolean().optional().default(false).describe('是否在预热缓存后再测量（模拟回访用户缓存命中场景）'),
+    }, async ({ url, saveScreenshot, timeout, warmCache }) => {
         // 如果没有提供URL，返回等待输入的提示
         if (!url) {
             return {
@@ -100,8 +101,9 @@ export async function createPerformanceServer(config = {}, transportMode = 'stdi
         }
         try {
             // 执行性能分析
-            const result = await analyzePerformance(url, saveScreenshot, timeout);
+            const result = await analyzePerformance(url, saveScreenshot, timeout, warmCache);
             // 构建友好的响应信息
+            const cacheMode = warmCache ? '热缓存（预热后测量）' : '冷缓存（首次访问）';
             const response = `
 ## 性能分析结果:
 
@@ -109,6 +111,7 @@ export async function createPerformanceServer(config = {}, transportMode = 'stdi
 - URL: ${result.url}
 - 分析时间: ${result.timestamp}
 - 会话ID: ${result.sessionId}
+- 缓存模式: ${cacheMode}
 
 ### 关键性能指标
 - 页面加载时间: ${Math.round(result.metrics.navigationTiming.loadTime)}ms
