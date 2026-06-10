@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
-import { launchBrowser, visitPage, visitPageWithWarmCache, collectPerformanceMetrics, saveScreenshot, getScreenshotData } from '../utils/browser.js';
+import { config } from '../config.js';
+import { launchBrowser, releaseBrowser, visitPage, visitPageWithWarmCache, collectPerformanceMetrics, saveScreenshot, getScreenshotData } from '../utils/browser.js';
 // 会话存储
 const sessions = new Map();
 // 分析URL的性能
@@ -31,7 +32,7 @@ export async function analyzePerformance(url, saveScreenshotOption = true, timeo
                     id: nanoid(),
                     timestamp: new Date().toISOString(),
                     path: screenshotPath,
-                    format: 'png'
+                    format: config.screenshots.format
                 };
             }
         }
@@ -72,11 +73,11 @@ export async function analyzePerformance(url, saveScreenshotOption = true, timeo
         throw error;
     }
     finally {
-        // 关闭页面和浏览器
+        // 关闭页面并归还浏览器实例
         if (page)
             await page.close();
         if (browser)
-            await browser.close();
+            await releaseBrowser(browser);
     }
 }
 // 分析性能问题

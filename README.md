@@ -27,7 +27,61 @@ npm run build
 
 ## 使用方式
 
-服务支持两种传输模式和两种交互方式：
+项目支持两类使用方式：
+
+- 作为 CLI 工具直接分析网页
+- 作为 MCP 服务通过 STDIO 或 SSE 集成到客户端
+
+### CLI模式
+
+本地使用：
+
+```bash
+# 构建项目
+npm run build
+
+# 直接分析
+npm run cli -- https://example.com
+
+# 或直接执行脚本
+node scripts/analyze.js https://example.com
+```
+
+安装后使用：
+
+```bash
+# 全局安装后
+performance-cli https://example.com
+performance-analyzer https://example.com
+
+# 不安装，直接通过 npx 调用
+npx -p @ylmz/performance-analyzer-mcp performance-cli https://example.com
+```
+
+常用选项：
+
+```bash
+# 设置超时时间
+performance-cli https://example.com --timeout 45000
+
+# 预热缓存后再测量
+performance-cli https://example.com --warm-cache
+
+# 不保存截图
+performance-cli https://example.com --no-screenshot
+
+# 输出 JSON
+performance-cli https://example.com --json
+
+# 输出 Markdown 报告
+performance-cli https://example.com --format md -o report.md
+```
+
+完整参数：
+
+```bash
+performance-cli --help
+```
 
 ### 传输模式
 
@@ -53,24 +107,9 @@ npm run start:sse
 node build/index.js --transport=sse --port=3002
 ```
 
-### 交互方式
+### MCP工具调用
 
-#### 方式一：直接提供URL（传统方式）
-
-```bash
-# 使用 analyze.js CLI 分析指定URL
-node scripts/analyze.js https://example.com
-```
-
-#### 方式二：先启动服务，后输入URL（交互式）
-
-```bash
-# 启动服务，不指定URL
-node scripts/demo.js
-# 然后根据提示输入URL
-```
-
-或者直接调用MCP工具：
+启动 MCP 服务后，可以通过 MCP 客户端调用工具：
 
 ```json
 {
@@ -163,6 +202,7 @@ MCP服务提供三个主要工具：
      - `url`: 要分析的网页URL
      - `saveScreenshot`: 是否保存截图（可选，默认true）
      - `timeout`: 页面加载超时时间（可选，默认30000ms）
+     - `warmCache`: 是否预热缓存后再测量（可选，默认false）
 
 2. **get-screenshot**
    - 获取指定会话的页面截图

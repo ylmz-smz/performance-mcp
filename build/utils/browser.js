@@ -163,6 +163,12 @@ export async function launchBrowser() {
     return await browserPool.getBrowser();
 }
 /**
+ * 释放浏览器实例回池
+ */
+export async function releaseBrowser(browser) {
+    await browserPool.releaseBrowser(browser);
+}
+/**
  * 访问页面并返回Page对象
  */
 export async function visitPage(browserOrUrl, urlOrTimeout, timeoutArg) {
@@ -505,16 +511,6 @@ export async function collectPerformanceMetrics(page) {
  * 收集Core Web Vitals指标
  */
 async function collectWebVitals(page) {
-    // 注入web-vitals库
-    await page.evaluate(() => {
-        return new Promise((resolve) => {
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/web-vitals@3/dist/web-vitals.iife.js';
-            script.onload = resolve;
-            document.head.appendChild(script);
-        });
-    });
-    // 收集指标
     const webVitals = await page.evaluate(() => {
         return new Promise((resolve) => {
             const metrics = {
@@ -523,64 +519,53 @@ async function collectWebVitals(page) {
                 cumulativeLayoutShift: 0,
                 totalBlockingTime: 0
             };
-            // @ts-ignore - 全局web-vitals变量由上面注入的脚本提供
-            const { onLCP, onFID, onFCP, onCLS, onINP } = window.webVitals;
-            let metricsCollected = 0;
-            const totalMetrics = 3; // LCP + CLS + TBT(longtask)
-            function checkComplete() {
-                metricsCollected++;
-                if (metricsCollected >= totalMetrics) {
+            let settled = false;
+            function finish() {
+                if (!settled) {
+                    settled = true;
                     resolve(metrics);
                 }
             }
-            onLCP(({ value }) => {
-                metrics.largestContentfulPaint = value;
-                checkComplete();
-            });
-            // onFID 在 web-vitals v3 中已废弃，优先使用 onINP；两者都尝试
-            try {
-                if (typeof onINP === 'function') {
-                    onINP(({ value }) => {
-                        metrics.firstInputDelay = value;
-                    });
-                }
-                else if (typeof onFID === 'function') {
-                    onFID(({ value }) => {
-                        metrics.firstInputDelay = value;
-                    });
-                }
-            }
-            catch (_) { /* 忽略不支持的指标 */ }
-            onCLS(({ value }) => {
-                metrics.cumulativeLayoutShift = value;
-                checkComplete();
-            });
-            // TBT 通过 PerformanceObserver longtask 计算（非 web-vitals 提供）
             try {
                 let tbt = 0;
-                const observer = new PerformanceObserver((list) => {
+                const longTaskObserver = new PerformanceObserver((list) => {
                     for (const entry of list.getEntries()) {
                         const blockingTime = entry.duration - 50;
                         if (blockingTime > 0)
                             tbt += blockingTime;
                     }
                 });
-                observer.observe({ type: 'longtask', buffered: true });
-                // 等待足够时间后取 TBT 快照
+                longTaskObserver.observe({ type: 'longtask', buffered: true });
+                const lcpObserver = new PerformanceObserver((list) => {
+                    const entries = list.getEntries();
+                    const lastEntry = entries[entries.length - 1];
+                    if (lastEntry) {
+                        metrics.largestContentfulPaint = lastEntry.startTime;
+                    }
+                });
+                lcpObserver.observe({ type: 'largest-contentful-paint', buffered: true });
+                const clsObserver = new PerformanceObserver((list) => {
+                    for (const entry of list.getEntries()) {
+                        if (!entry.hadRecentInput) {
+                            metrics.cumulativeLayoutShift += entry.value || 0;
+                        }
+                    }
+                });
+                clsObserver.observe({ type: 'layout-shift', buffered: true });
                 setTimeout(() => {
-                    observer.disconnect();
+                    longTaskObserver.disconnect();
+                    lcpObserver.disconnect();
+                    clsObserver.disconnect();
                     metrics.totalBlockingTime = Math.round(tbt);
-                    checkComplete();
-                }, 3000);
+                    finish();
+                }, 250);
             }
             catch (_) {
-                // 浏览器不支持 longtask，直接完成
-                checkComplete();
+                finish();
             }
-            // 30秒后无论如何都返回结果
             setTimeout(() => {
-                resolve(metrics);
-            }, 30000);
+                finish();
+            }, 1000);
         });
     });
     return webVitals;
@@ -590,7 +575,7 @@ async function collectWebVitals(page) {
  */
 export async function saveScreenshot(page, sessionId) {
     // 检查screenshots配置
-    const screenshotsEnabled = Boolean(config.screenshots && config.screenshots.enabled);
+    const screenshotsEnabled = config.screenshots.enabled;
     if (!screenshotsEnabled) {
         return '';
     }
@@ -628,7 +613,7 @@ async function ensureDirectoryExists(directory) {
  */
 export async function cleanupOldScreenshots() {
     // 检查screenshots配置
-    const screenshotsEnabled = Boolean(config.screenshots && config.screenshots.enabled);
+    const screenshotsEnabled = config.screenshots.enabled;
     if (!screenshotsEnabled) {
         return;
     }
@@ -712,10 +697,20 @@ export async function prewarmBrowser() {
         throw error;
     }
 }
+/**
+ * 关闭浏览器池和后台清理任务
+ */
+export async function closeBrowserResources() {
+    if (screenshotCleanupInterval) {
+        clearInterval(screenshotCleanupInterval);
+        screenshotCleanupInterval = null;
+    }
+    await browserPool.closeAll();
+}
 // 启动定期截图清理
 let screenshotCleanupInterval = null;
 // 检查screenshots配置
-const screenshotsEnabled = Boolean(config.screenshots && config.screenshots.enabled);
+const screenshotsEnabled = config.screenshots.enabled;
 if (screenshotsEnabled && config.screenshots.cleanupInterval > 0) {
     screenshotCleanupInterval = setInterval(cleanupOldScreenshots, config.screenshots.cleanupInterval);
 }
@@ -724,17 +719,14 @@ process.on('exit', () => {
     if (screenshotCleanupInterval) {
         clearInterval(screenshotCleanupInterval);
     }
-    // closeAllBrowsers() 是异步的，但这里无法等待它完成
+    // closeAll() 是异步的，但这里无法等待它完成
     // 尽最大努力尝试关闭
     browserPool.closeAll().catch(console.error);
 });
 // 处理意外退出
 process.on('SIGINT', async () => {
-    if (screenshotCleanupInterval) {
-        clearInterval(screenshotCleanupInterval);
-    }
     try {
-        await browserPool.closeAll();
+        await closeBrowserResources();
     }
     catch (error) {
         console.error('关闭浏览器时出错:', error);

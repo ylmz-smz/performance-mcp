@@ -1,264 +1,350 @@
 #!/usr/bin/env node
 
 /**
- * 性能分析MCP服务 CLI 演示工具
- * 用法: node scripts/analyze.js [url]
- * 如果不提供URL，脚本会启动服务并等待用户输入
+ * 网页性能分析 CLI
+ * 用法: performance-cli <url> [options]
  */
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { spawn, execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import readline from 'readline';
 
-// Windows 下切换控制台为 UTF-8，避免中文/emoji 乱码
-if (process.platform === 'win32') {
-  try {
-    execSync('chcp 65001', { stdio: 'ignore' });
-  } catch (_) {
-    // 忽略切换失败，继续运行
-  }
-}
-
-// 获取当前脚本的目录
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-// 项目根目录
 const ROOT_DIR = join(__dirname, '..');
-const BUILD_DIR = join(ROOT_DIR, 'build');
+const PKG_PATH = join(ROOT_DIR, 'package.json');
 
-// 命令行参数
-const args = process.argv.slice(2);
-const url = args[0];
+const USAGE = `
+网页性能分析 CLI
 
-/**
- * 格式化时间
- */
-function formatTime(ms) {
-  return `${(ms/1000).toFixed(2)}秒`;
+用法:
+  performance-cli <url> [options]
+  performance-cli [options]
+
+参数:
+  <url>                     要分析的网页 URL；省略时进入交互输入
+
+选项:
+  --timeout <ms>            页面加载超时时间，默认 30000
+  --warm-cache              先预热缓存，再进行正式测量
+  --no-screenshot           不保存页面截图
+  --format <text|json|md>   输出格式，默认 text
+  --json                    等同于 --format json
+  -o, --output <file>       将报告写入文件
+  -h, --help                显示帮助
+  -v, --version             显示版本号
+
+示例:
+  performance-cli https://example.com
+  performance-cli https://example.com --timeout 45000 --warm-cache
+  performance-cli https://example.com --json -o report.json
+  performance-cli https://example.com --format md -o report.md
+`.trim();
+
+function readPackageJson() {
+  return JSON.parse(readFileSync(PKG_PATH, 'utf8'));
 }
 
-/**
- * 创建用户输入接口
- */
-function createUserInterface() {
-  return readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-}
-
-/**
- * 主函数
- */
-async function main() {
-  console.log('🚀 启动性能分析服务...');
-  
-  // 启动MCP服务
-  const mcpProcess = spawn('node', [join(BUILD_DIR, 'index.js')], {
-    stdio: ['pipe', 'pipe', 'inherit'],
-    cwd: ROOT_DIR,
-    env: { ...process.env, LANG: 'en_US.UTF-8' },
-  });
-
-  // 强制以 UTF-8 读取子进程 stdout，避免 Windows 默认 GBK 编码导致 JSON 解析失败
-  mcpProcess.stdout.setEncoding('utf8');
-  mcpProcess.stdin.setDefaultEncoding('utf8');
-  
-  // 创建读写接口
-  const rl = readline.createInterface({
-    input: mcpProcess.stdout,
-    output: process.stdout,
-    terminal: false,
-  });
-  
-  // 捕获输出进行处理
-  let sessionId = null;
-
-  // 发送 MCP initialize 握手请求
-  const initRequest = {
-    jsonrpc: "2.0",
-    id: "init",
-    method: "initialize",
-    params: {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "demo-client", version: "1.0.0" }
-    }
+function parseArgs(argv) {
+  const options = {
+    url: undefined,
+    timeout: 30000,
+    saveScreenshot: true,
+    warmCache: false,
+    format: 'text',
+    output: undefined,
+    help: false,
+    version: false,
   };
-  mcpProcess.stdin.write(JSON.stringify(initRequest) + '\n');
 
-  /**
-   * 发送分析请求（可接收 URL 或从命令行读取）
-   */
-  function sendAnalyzeRequest(targetUrl) {
-    console.log(`🔍 开始分析URL: ${targetUrl}`);
-    const request = {
-      jsonrpc: "2.0",
-      id: "1",
-      method: "tools/call",
-      params: {
-        name: "analyze-performance",
-        arguments: { url: targetUrl, saveScreenshot: true }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+
+    if (arg === '-h' || arg === '--help') {
+      options.help = true;
+    } else if (arg === '-v' || arg === '--version') {
+      options.version = true;
+    } else if (arg === '--timeout') {
+      const value = argv[++i];
+      const timeout = Number.parseInt(value, 10);
+      if (!Number.isFinite(timeout) || timeout <= 0) {
+        throw new Error('--timeout 必须是正整数毫秒值');
       }
-    };
-    mcpProcess.stdin.write(JSON.stringify(request) + '\n');
+      options.timeout = timeout;
+    } else if (arg.startsWith('--timeout=')) {
+      const timeout = Number.parseInt(arg.slice('--timeout='.length), 10);
+      if (!Number.isFinite(timeout) || timeout <= 0) {
+        throw new Error('--timeout 必须是正整数毫秒值');
+      }
+      options.timeout = timeout;
+    } else if (arg === '--warm-cache') {
+      options.warmCache = true;
+    } else if (arg === '--no-screenshot') {
+      options.saveScreenshot = false;
+    } else if (arg === '--screenshot') {
+      options.saveScreenshot = true;
+    } else if (arg === '--json') {
+      options.format = 'json';
+    } else if (arg === '--format') {
+      const value = argv[++i];
+      options.format = normalizeFormat(value);
+    } else if (arg.startsWith('--format=')) {
+      options.format = normalizeFormat(arg.slice('--format='.length));
+    } else if (arg === '-o' || arg === '--output') {
+      options.output = argv[++i];
+      if (!options.output) {
+        throw new Error(`${arg} 需要提供文件路径`);
+      }
+    } else if (arg.startsWith('--output=')) {
+      options.output = arg.slice('--output='.length);
+      if (!options.output) {
+        throw new Error('--output 需要提供文件路径');
+      }
+    } else if (arg.startsWith('-')) {
+      throw new Error(`未知选项: ${arg}`);
+    } else if (!options.url) {
+      options.url = arg;
+    } else {
+      throw new Error(`只能提供一个 URL，收到额外参数: ${arg}`);
+    }
   }
-  
-  rl.on('line', async (line) => {
-    try {
-      const data = JSON.parse(line);
 
-      // 处理 initialize 响应，完成握手后发送 initialized 通知并开始分析
-      if (data.id === "init" && data.result) {
-        console.log('✅ 性能分析服务已就绪');
-        // 发送 initialized 通知
-        const initializedNotification = {
-          jsonrpc: "2.0",
-          method: "notifications/initialized",
-          params: {}
-        };
-        mcpProcess.stdin.write(JSON.stringify(initializedNotification) + '\n');
+  return options;
+}
 
-        if (url) {
-          sendAnalyzeRequest(url);
-        } else {
-          const userRl = createUserInterface();
-          userRl.question('请输入要分析的URL: ', (inputUrl) => {
-            userRl.close();
-            sendAnalyzeRequest(inputUrl);
-          });
-        }
-        return;
-      }
+function normalizeFormat(format) {
+  if (format === 'markdown') return 'md';
+  if (['text', 'json', 'md'].includes(format)) return format;
+  throw new Error('--format 只支持 text、json、md');
+}
 
-      if ((data.jsonrpc === "2.0" && data.id === "1" && data.result) || 
-                (data.type === 'response' && data.id === '1')) {
-        // 适配两种可能的响应格式
-        const content = data.result ? data.result.content : data.content;
-        
-        // 检查是否有错误
-        const isError = data.result ? data.result.isError : data.isError;
-        if (isError) {
-          const errorText = content && content[0] ? content[0].text : "未知错误";
-          console.error('❌ 分析过程中发生错误:', errorText);
-          process.exit(1);
-        }
-        
-        // 获取响应文本
-        const responseText = content && content[0] ? content[0].text : "";
-        
-        console.log('✅ 分析完成!');
-        
-        // 提取会话ID
-        const sessionIdMatch = responseText.match(/会话ID: ([a-zA-Z0-9_-]+)/);
-        
-        if (sessionIdMatch && sessionIdMatch[1]) {
-          sessionId = sessionIdMatch[1];
-          
-          // 提取关键性能指标并格式化输出
-          const loadTimeMatch = responseText.match(/页面加载时间: (\d+)ms/);
-          const fpcMatch = responseText.match(/首次绘制时间: (\d+)ms/);
-          const fcpMatch = responseText.match(/首次内容绘制: (\d+)ms/);
-          const resCountMatch = responseText.match(/总资源数: (\d+)个/);
-          const resSizeMatch = responseText.match(/总资源大小: ([\d.]+)MB/);
-          
-          console.log('\n📊 性能摘要:');
-          console.log('--------------------------------------------------');
-          if (loadTimeMatch) console.log(`⏱️  页面加载时间: ${formatTime(parseInt(loadTimeMatch[1], 10))}`);
-          if (fpcMatch) console.log(`🎨 首次绘制: ${formatTime(parseInt(fpcMatch[1], 10))}`);
-          if (fcpMatch) console.log(`🖼️  首次内容绘制: ${formatTime(parseInt(fcpMatch[1], 10))}`);
-          if (resCountMatch) console.log(`📦 总资源数: ${resCountMatch[1]}个`);
-          if (resSizeMatch) console.log(`💾 总资源大小: ${resSizeMatch[1]}MB`);
-          console.log('--------------------------------------------------');
-          
-          // 提取问题和建议数量
-          const issuesMatch = responseText.match(/发现的问题\((\d+)个\)/);
-          const recsMatch = responseText.match(/优化建议\((\d+)个\)/);
-          
-          if (issuesMatch) {
-            console.log(`\n🔴 发现了 ${issuesMatch[1]} 个性能问题`);
-            
-            // 提取问题
-            const issuesSection = responseText.split('发现的问题')[1].split('优化建议')[0];
-            const issues = issuesSection.match(/- \[[A-Z]+\] .+/g);
-            
-            if (issues) {
-              issues.forEach(issue => {
-                console.log(`  ${issue}`);
-              });
-            }
-          }
-          
-          if (recsMatch) {
-            console.log(`\n💡 ${recsMatch[1]} 个优化建议可供参考`);
-          }
-          
-          // 获取详情
-          console.log('\n📝 获取完整分析报告...');
-          
-          // 使用JSON-RPC 2.0格式
-          const detailsRequest = {
-            jsonrpc: "2.0",
-            id: "2",
-            method: "tools/call",
-            params: {
-              name: "get-analysis-details",
-              arguments: { sessionId }
-            }
-          };
-          
-          mcpProcess.stdin.write(JSON.stringify(detailsRequest) + '\n');
-        }
-      }
-      else if ((data.jsonrpc === "2.0" && data.id === "2" && data.result) || 
-               (data.type === 'response' && data.id === '2')) {
-        // 适配两种可能的响应格式
-        const content = data.result ? data.result.content : data.content;
-        const details = content && content[0] ? content[0].text : "";
-        
-        console.log('\n📋 详细分析报告已生成');
-        console.log('--------------------------------------------------');
-        console.log('报告摘要:');
-        
-        // 提取慢资源信息
-        if (details.includes('加载最慢的资源')) {
-          const slowResourcesSection = details.split('加载最慢的资源')[1].split('发现的问题')[0];
-          const slowResources = slowResourcesSection.match(/\d+\. \[[^\]]+\].+/g);
-          
-          if (slowResources && slowResources.length > 0) {
-            console.log('\n⚠️  加载最慢的资源:');
-            slowResources.slice(0, 3).forEach(resource => {
-              console.log(`  ${resource.split('\n')[0]}`);
-            });
-          }
-        }
-        
-        console.log('\n🏁 分析完成! 服务即将关闭...');
-        
-        // 延迟关闭进程
-        setTimeout(() => {
-          mcpProcess.kill();
-          process.exit(0);
-        }, 1000);
-      }
-    } catch (err) {
-      // 非JSON行，忽略
-    }
+function promptForUrl() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stderr,
   });
-  
-  // 处理MCP进程退出
-  mcpProcess.on('close', (code) => {
-    if (code !== 0 && code !== null) {
-      console.error(`❌ 性能分析服务异常退出，退出码: ${code}`);
-      process.exit(1);
-    }
+
+  return new Promise((resolve) => {
+    rl.question('请输入要分析的URL: ', (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
   });
 }
 
-// 启动演示
-main().catch(err => {
-  console.error('演示脚本执行出错:', err);
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(2)} KB`;
+  }
+  return `${bytes} B`;
+}
+
+function formatMs(ms) {
+  return `${Math.round(ms)}ms`;
+}
+
+function toSerializableResult(result) {
+  return {
+    sessionId: result.sessionId,
+    url: result.url,
+    timestamp: result.timestamp,
+    metrics: result.metrics,
+    issues: result.issues,
+    recommendations: result.recommendations,
+    screenshot: result.screenshot,
+  };
+}
+
+function renderText(result) {
+  const metrics = result.metrics;
+  const nav = metrics.navigationTiming;
+  const resources = metrics.resources;
+  const network = metrics.networkQuality;
+  const cacheMode = result.options?.warmCache ? '热缓存' : '冷缓存';
+
+  const lines = [
+    '性能分析结果',
+    '',
+    `URL: ${result.url}`,
+    `分析时间: ${result.timestamp}`,
+    `会话ID: ${result.sessionId}`,
+    `缓存模式: ${cacheMode}`,
+    '',
+    '关键性能指标',
+    `- 页面加载时间: ${formatMs(nav.loadTime)}`,
+    `- DOM内容加载时间: ${formatMs(nav.domContentLoaded)}`,
+    `- 首次绘制时间: ${formatMs(nav.firstPaint)}`,
+    `- 首次内容绘制: ${formatMs(nav.firstContentfulPaint)}`,
+    `- 最大内容绘制: ${formatMs(nav.largestContentfulPaint)}`,
+    `- 总阻塞时间: ${formatMs(nav.totalBlockingTime)}`,
+    `- 累积布局偏移: ${nav.cumulativeLayoutShift.toFixed(3)}`,
+    '',
+    '资源统计',
+    `- 总资源数: ${resources.totalCount}`,
+    `- 总资源大小: ${formatBytes(resources.totalSize)}`,
+    '',
+    '网络质量',
+    `- HTTP/2+资源: ${network.http2ResourceCount}`,
+    `- HTTP/1.x资源: ${network.http1ResourceCount}`,
+    `- 平均TTFB: ${formatMs(network.avgTtfb)}`,
+    `- 缓存命中率: ${(network.cacheHitRate * 100).toFixed(1)}%`,
+    `- 未压缩文本资源: ${network.uncompressedCount}`,
+    '',
+    `发现的问题(${result.issues.length}个)`,
+    ...renderIssueLines(result.issues),
+    '',
+    `优化建议(${result.recommendations.length}个)`,
+    ...renderRecommendationLines(result.recommendations),
+  ];
+
+  if (result.screenshot) {
+    lines.push('', `截图: 已保存为 ${result.screenshot.format}`);
+  }
+
+  return lines.join('\n');
+}
+
+function renderMarkdown(result) {
+  const metrics = result.metrics;
+  const nav = metrics.navigationTiming;
+  const resources = metrics.resources;
+  const network = metrics.networkQuality;
+  const cacheMode = result.options?.warmCache ? '热缓存' : '冷缓存';
+
+  return [
+    '# 性能分析结果',
+    '',
+    `- URL: ${result.url}`,
+    `- 分析时间: ${result.timestamp}`,
+    `- 会话ID: ${result.sessionId}`,
+    `- 缓存模式: ${cacheMode}`,
+    '',
+    '## 关键性能指标',
+    '',
+    `- 页面加载时间: ${formatMs(nav.loadTime)}`,
+    `- DOM内容加载时间: ${formatMs(nav.domContentLoaded)}`,
+    `- 首次绘制时间: ${formatMs(nav.firstPaint)}`,
+    `- 首次内容绘制: ${formatMs(nav.firstContentfulPaint)}`,
+    `- 最大内容绘制: ${formatMs(nav.largestContentfulPaint)}`,
+    `- 总阻塞时间: ${formatMs(nav.totalBlockingTime)}`,
+    `- 累积布局偏移: ${nav.cumulativeLayoutShift.toFixed(3)}`,
+    '',
+    '## 资源统计',
+    '',
+    `- 总资源数: ${resources.totalCount}`,
+    `- 总资源大小: ${formatBytes(resources.totalSize)}`,
+    '',
+    '## 网络质量',
+    '',
+    `- HTTP/2+资源: ${network.http2ResourceCount}`,
+    `- HTTP/1.x资源: ${network.http1ResourceCount}`,
+    `- 平均TTFB: ${formatMs(network.avgTtfb)}`,
+    `- 缓存命中率: ${(network.cacheHitRate * 100).toFixed(1)}%`,
+    `- 未压缩文本资源: ${network.uncompressedCount}`,
+    '',
+    `## 发现的问题(${result.issues.length}个)`,
+    '',
+    ...renderIssueLines(result.issues),
+    '',
+    `## 优化建议(${result.recommendations.length}个)`,
+    '',
+    ...renderRecommendationLines(result.recommendations),
+    result.screenshot ? `\n截图已保存，格式: ${result.screenshot.format}` : '',
+  ].join('\n');
+}
+
+function renderIssueLines(issues) {
+  if (issues.length === 0) {
+    return ['- 未发现明显性能问题'];
+  }
+
+  return issues.map((issue) => `- [${issue.severity.toUpperCase()}] ${issue.description}`);
+}
+
+function renderRecommendationLines(recommendations) {
+  if (recommendations.length === 0) {
+    return ['- 暂无建议'];
+  }
+
+  return recommendations.map((rec) => `- ${rec.title}: ${rec.description} (难度: ${rec.difficulty}, 预期影响: ${rec.expectedImpact})`);
+}
+
+function renderResult(result, format) {
+  if (format === 'json') {
+    return `${JSON.stringify(toSerializableResult(result), null, 2)}\n`;
+  }
+  if (format === 'md') {
+    return `${renderMarkdown(result)}\n`;
+  }
+  return `${renderText(result)}\n`;
+}
+
+async function loadAnalyzer() {
+  try {
+    const analyzer = await import('../build/analyzer/performanceAnalyzer.js');
+    const browser = await import('../build/utils/browser.js');
+    return {
+      analyzePerformance: analyzer.analyzePerformance,
+      closeBrowserResources: browser.closeBrowserResources,
+    };
+  } catch (error) {
+    throw new Error(`无法加载构建产物，请先运行 npm run build。原始错误: ${error.message}`);
+  }
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const pkg = readPackageJson();
+
+  if (options.help) {
+    console.log(USAGE);
+    return;
+  }
+
+  if (options.version) {
+    console.log(pkg.version);
+    return;
+  }
+
+  const url = options.url || await promptForUrl();
+  if (!url) {
+    throw new Error('未提供 URL');
+  }
+
+  const { analyzePerformance, closeBrowserResources } = await loadAnalyzer();
+
+  try {
+    process.stderr.write(`开始分析: ${url}\n`);
+    const result = await analyzePerformance(
+      url,
+      options.saveScreenshot,
+      options.timeout,
+      options.warmCache,
+    );
+    result.options = {
+      warmCache: options.warmCache,
+      saveScreenshot: options.saveScreenshot,
+      timeout: options.timeout,
+    };
+
+    const output = renderResult(result, options.format);
+    if (options.output) {
+      await writeFile(options.output, output, 'utf8');
+      process.stderr.write(`报告已写入: ${options.output}\n`);
+    } else {
+      process.stdout.write(output);
+    }
+  } finally {
+    await closeBrowserResources();
+  }
+}
+
+main().catch((error) => {
+  process.stderr.write(`错误: ${error.message || error}\n`);
   process.exit(1);
 });

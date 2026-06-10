@@ -8,8 +8,10 @@ import {
   PerformanceAnalysisResult,
   Screenshot
 } from '../types/performance.js';
+import { config } from '../config.js';
 import {
   launchBrowser,
+  releaseBrowser,
   visitPage,
   visitPageWithWarmCache,
   collectPerformanceMetrics,
@@ -58,7 +60,7 @@ export async function analyzePerformance(
           id: nanoid(),
           timestamp: new Date().toISOString(),
           path: screenshotPath,
-          format: 'png'
+          format: config.screenshots.format
         };
       }
     }
@@ -103,9 +105,9 @@ export async function analyzePerformance(
     console.error('Error analyzing performance:', error);
     throw error;
   } finally {
-    // 关闭页面和浏览器
+    // 关闭页面并归还浏览器实例
     if (page) await page.close();
-    if (browser) await browser.close();
+    if (browser) await releaseBrowser(browser);
   }
 }
 

@@ -29,6 +29,7 @@ const configSchema = z.object({
     }),
     // 截图管理配置
     screenshots: z.object({
+        enabled: z.boolean().default(true),
         directory: z.string().default(path.join(process.cwd(), 'screenshots')),
         format: z.enum(['png', 'jpeg']).default('png'),
         maxAge: z.number().default(86400000), // 截图最大保存时间(毫秒)，默认24小时
@@ -77,6 +78,7 @@ const defaultConfig = {
         maxLifetime: 3600000,
     },
     screenshots: {
+        enabled: true,
         directory: path.join(process.cwd(), 'screenshots'),
         format: 'png',
         maxAge: 86400000,

@@ -5,6 +5,7 @@
   "main": "build/index.js",
   "bin": {
     "performance-mcp": "build/index.js",
+    "performance-analyzer": "scripts/analyze.js",
     "performance-cli": "scripts/analyze.js"
   },
   "type": "module",
@@ -24,6 +25,7 @@
     "postinstall": "playwright-core install chromium",
     "start": "node build/index.js",
     "start:sse": "node build/index.js --transport=sse",
+    "cli": "node scripts/analyze.js",
     "dev": "ts-node-esm src/index.ts",
     "dev:sse": "ts-node-esm src/index.ts --transport=sse",
     "client:sse": "node scripts/sse-client.js"
